@@ -28,7 +28,10 @@ $routes->group('', ['filter' => 'auth'], function($routes) {
     $routes->post('/presensi/update/(:num)', 'Presensi::update/$1');
     $routes->get('/presensi/delete/(:num)', 'Presensi::delete/$1');
     $routes->get('/presensi/exportCsv', 'Presensi::exportCsv');
-    $routes->post('/presensi/scanRfid', 'Presensi::scanRfid');
+    $routes->get('/presensi/scan', 'Presensi::scan');
+    $routes->post('/presensi/scan-rfid', 'Presensi::scanRfid');
+    $routes->get('/presensi/debug-user/(:segment)', 'Presensi::debugUser/$1');
+    $routes->get('/presensi/check-user/(:segment)', 'Presensi::checkUserData/$1');
 
     // Jadwal Shift Routes
     $routes->get('/jadwal-shift', 'JadwalShift::index');

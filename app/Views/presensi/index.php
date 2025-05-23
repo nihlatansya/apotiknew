@@ -11,25 +11,16 @@
     </ol>
 
     <div class="card mb-4">
-        <div class="card-header">
-            <i class="fas fa-clock me-1"></i>
-            Data Presensi
-            <div class="float-end d-flex gap-2">
-                <select class="form-select form-select-sm" id="bulan" style="width: auto;" onchange="filterByMonth()">
-                    <option value="01">Januari</option>
-                    <option value="02">Februari</option>
-                    <option value="03">Maret</option>
-                    <option value="04">April</option>
-                    <option value="05">Mei</option>
-                    <option value="06">Juni</option>
-                    <option value="07">Juli</option>
-                    <option value="08">Agustus</option>
-                    <option value="09">September</option>
-                    <option value="10">Oktober</option>
-                    <option value="11">November</option>
-                    <option value="12">Desember</option>
-                </select>
-                <a href="#" class="btn btn-success btn-sm" onclick="exportCsv()">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <div>
+                <i class="fas fa-table me-1"></i>
+                Data Presensi
+            </div>
+            <div>
+                <a href="/presensi/scan" class="btn btn-primary me-2">
+                    <i class="fas fa-id-card"></i> Scan RFID
+                </a>
+                <a href="/presensi/exportCsv" class="btn btn-success">
                     <i class="fas fa-file-excel"></i> Export CSV
                 </a>
             </div>
