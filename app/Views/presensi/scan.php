@@ -49,6 +49,13 @@ document.getElementById('rfid').addEventListener('keypress', function(e) {
         e.preventDefault();
         const rfid = this.value;
         
+        if (!rfid) {
+            alert('ID RFID tidak boleh kosong');
+            this.value = '';
+            this.focus();
+            return;
+        }
+        
         // Kirim data ke server
         fetch('/presensi/scan-rfid', {
             method: 'POST',

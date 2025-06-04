@@ -30,6 +30,7 @@ $routes->group('', ['filter' => 'auth'], function($routes) {
     $routes->get('/presensi/exportCsv', 'Presensi::exportCsv');
     $routes->get('/presensi/scan', 'Presensi::scan');
     $routes->post('/presensi/scan-rfid', 'Presensi::scanRfid');
+    $routes->post('/presensi/scan-rfid-device', 'Presensi::scanRfidDevice');
     $routes->get('/presensi/debug-user/(:segment)', 'Presensi::debugUser/$1');
     $routes->get('/presensi/check-user/(:segment)', 'Presensi::checkUserData/$1');
 
