@@ -22,13 +22,14 @@ $routes->post('/processRegister', 'Auth::processRegister', ['filter' => 'guest']
 $routes->get('/logout', 'Auth::logout', ['filter' => 'auth']);
 
 // Presensi Routes
-$routes->group('', ['filter' => 'auth'], function($routes) {
+$routes->group('', ['filter' => 'auth'], function ($routes) {
     $routes->get('/presensi', 'Presensi::index');
+    $routes->get('/presensi/(:segment)', 'Presensi::index/$1');
     $routes->get('/presensi/edit/(:num)', 'Presensi::edit/$1');
     $routes->post('/presensi/update/(:num)', 'Presensi::update/$1');
     $routes->get('/presensi/delete/(:num)', 'Presensi::delete/$1');
     $routes->get('/presensi/exportCsv', 'Presensi::exportCsv');
-    $routes->get('/presensi/scan', 'Presensi::scan');
+    $routes->get('/presensi/exportCsv/(:segment)', 'Presensi::exportCsv/$1');
     $routes->post('/presensi/scan-rfid', 'Presensi::scanRfid');
     $routes->post('/presensi/scan-rfid-device', 'Presensi::scanRfidDevice');
     $routes->get('/presensi/debug-user/(:segment)', 'Presensi::debugUser/$1');
@@ -53,3 +54,7 @@ $routes->group('', ['filter' => 'auth'], function($routes) {
 
 // Dashboard Route
 $routes->get('/dashboard', 'Dashboard::index');
+
+// Public scan route (no auth required)
+$routes->get('/scan', 'Presensi::publicScan');
+$routes->post('/scan-rfid', 'Presensi::publicScanRfid');

@@ -48,6 +48,7 @@ document.getElementById('rfid').addEventListener('keypress', function(e) {
     if (e.key === 'Enter') {
         e.preventDefault();
         const rfid = this.value;
+        const inputField = this;
         
         if (!rfid) {
             alert('ID RFID tidak boleh kosong');
@@ -55,6 +56,11 @@ document.getElementById('rfid').addEventListener('keypress', function(e) {
             this.focus();
             return;
         }
+        
+        // Disable input field
+        inputField.disabled = true;
+        inputField.style.backgroundColor = '#e9ecef';
+        inputField.style.cursor = 'not-allowed';
         
         // Kirim data ke server
         fetch('/presensi/scan-rfid', {
@@ -86,9 +92,26 @@ document.getElementById('rfid').addEventListener('keypress', function(e) {
                 }
                 
                 if (data.data.keterangan) {
-                    const keterangan = data.data.keterangan === 'telat' ? 'Terlambat' : 'Tepat Waktu';
-                    document.getElementById('keterangan').textContent = `Status: ${keterangan}`;
+                    document.getElementById('keterangan').textContent = `Status: ${data.data.keterangan}`;
                 }
+
+                // Tambahkan pesan countdown
+                const countdownDiv = document.createElement('div');
+                countdownDiv.className = 'text-center mt-3';
+                countdownDiv.innerHTML = '<small class="text-muted">Halaman akan di-refresh dalam <span id="countdown">2</span> detik...</small>';
+                resultDiv.appendChild(countdownDiv);
+
+                // Countdown
+                let count = 2;
+                const countdownElement = document.getElementById('countdown');
+                const countdownInterval = setInterval(() => {
+                    count--;
+                    countdownElement.textContent = count;
+                    if (count <= 0) {
+                        clearInterval(countdownInterval);
+                        window.location.reload();
+                    }
+                }, 1000);
             } else {
                 resultDiv.className = 'alert alert-danger';
                 document.getElementById('nama-karyawan').textContent = '';
@@ -96,11 +119,38 @@ document.getElementById('rfid').addEventListener('keypress', function(e) {
                 document.getElementById('jam-masuk').textContent = '';
                 document.getElementById('jam-pulang').textContent = '';
                 document.getElementById('keterangan').textContent = '';
+
+                // Jika error karena cooldown, refresh setelah waktu cooldown
+                if (data.message.includes('Mohon tunggu')) {
+                    const seconds = parseInt(data.message.match(/\d+/)[0]);
+                    
+                    // Tambahkan pesan countdown
+                    const countdownDiv = document.createElement('div');
+                    countdownDiv.className = 'text-center mt-3';
+                    countdownDiv.innerHTML = `<small class="text-muted">Halaman akan di-refresh dalam <span id="countdown">${seconds}</span> detik...</small>`;
+                    resultDiv.appendChild(countdownDiv);
+
+                    // Countdown
+                    let count = seconds;
+                    const countdownElement = document.getElementById('countdown');
+                    const countdownInterval = setInterval(() => {
+                        count--;
+                        countdownElement.textContent = count;
+                        if (count <= 0) {
+                            clearInterval(countdownInterval);
+                            window.location.reload();
+                        }
+                    }, 1000);
+                } else {
+                    // Enable input field kembali jika bukan error cooldown
+                    inputField.disabled = false;
+                    inputField.style.backgroundColor = '';
+                    inputField.style.cursor = '';
+                }
             }
             
             // Reset input
-            this.value = '';
-            this.focus();
+            inputField.value = '';
         })
         .catch(error => {
             console.error('Error:', error);
@@ -112,6 +162,11 @@ document.getElementById('rfid').addEventListener('keypress', function(e) {
             document.getElementById('jam-masuk').textContent = '';
             document.getElementById('jam-pulang').textContent = '';
             document.getElementById('keterangan').textContent = '';
+            
+            // Enable input field kembali
+            inputField.disabled = false;
+            inputField.style.backgroundColor = '';
+            inputField.style.cursor = '';
         });
     }
 });

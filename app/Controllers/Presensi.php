@@ -22,18 +22,28 @@ class Presensi extends BaseController
     public function index()
     {
         try {
-            $data['presensi'] = $this->presensiModel->getPresensiWithUser()->findAll();
-            
+            // Get current month if not specified
+            $bulan = $this->request->getGet('bulan') ?? date('m');
+
+            // Get data for selected month
+            $data['presensi'] = $this->presensiModel->getPresensiWithUser()
+                ->where('MONTH(tanggal)', $bulan)
+                ->where('YEAR(tanggal)', date('Y'))
+                ->findAll();
+
+            // Set current month for view
+            $data['currentMonth'] = $bulan;
+
             // Jika tidak ada data, set array kosong
             if (empty($data['presensi'])) {
                 $data['presensi'] = [];
             }
-            
+
             return view('presensi/index', $data);
         } catch (\Exception $e) {
             // Log error
             log_message('error', 'Error in Presensi::index: ' . $e->getMessage());
-            
+
             // Set data kosong dan tampilkan pesan error
             $data['presensi'] = [];
             $data['error'] = 'Terjadi kesalahan saat mengambil data presensi';
@@ -100,34 +110,87 @@ class Presensi extends BaseController
             $bulan = date('m');
         }
 
-        // Ambil data presensi untuk bulan yang dipilih
-        $presensi = $this->presensiModel->getPresensiWithUser()
-            ->where('MONTH(tanggal)', $bulan)
-            ->where('YEAR(tanggal)', date('Y'))
-            ->findAll();
+        // Pastikan format bulan adalah 2 digit
+        $bulan = str_pad($bulan, 2, '0', STR_PAD_LEFT);
 
-        $filename = 'presensi_' . date('Y') . '_' . $bulan . '.csv';
-        header('Content-Type: text/csv');
-        header('Content-Disposition: attachment; filename="' . $filename . '"');
+        // Get month name
+        $monthNames = [
+            '01' => 'Januari',
+            '02' => 'Februari',
+            '03' => 'Maret',
+            '04' => 'April',
+            '05' => 'Mei',
+            '06' => 'Juni',
+            '07' => 'Juli',
+            '08' => 'Agustus',
+            '09' => 'September',
+            '10' => 'Oktober',
+            '11' => 'November',
+            '12' => 'Desember'
+        ];
+        $monthName = $monthNames[$bulan] ?? '';
+        $tahun = date('Y');
 
+        // Set headers for CSV download
+        header('Content-Type: text/csv; charset=utf-8');
+        header('Content-Disposition: attachment; filename="Laporan_Presensi_' . $monthName . '_' . $tahun . '.csv"');
+        header('Pragma: no-cache');
+        header('Expires: 0');
+
+        // Create output stream
         $output = fopen('php://output', 'w');
 
+        // Add BOM for proper Excel encoding
+        fprintf($output, chr(0xEF) . chr(0xBB) . chr(0xBF));
+
         // Add CSV headers
-        fputcsv($output, ['No', 'Tanggal', 'Nama Karyawan', 'Jam Masuk', 'Jam Pulang', 'Persentase', 'Keterangan']);
+        fputcsv($output, ['LAPORAN PRESENSI KARYAWAN']);
+        fputcsv($output, ['Periode: ' . $monthName . ' ' . $tahun]);
+        fputcsv($output, ['']); // Empty line for spacing
+        fputcsv($output, ['No', 'Tanggal', 'Nama Karyawan', 'Shift', 'Jam Masuk', 'Jam Pulang', 'Persentase', 'Status']);
+
+        // Get data directly from database
+        $db = \Config\Database::connect();
+        $builder = $db->table('tb_presensi');
+        $builder->select('tb_presensi.*, tb_user.nama, tb_jadwal_shift.jenis_shift');
+        $builder->join('tb_user', 'tb_user.iduser = tb_presensi.tb_user_iduser');
+        $builder->join('tb_jadwal_shift', 'tb_jadwal_shift.id_jadwal_shift = tb_presensi.tb_jadwal_shift_id_jadwal_shift');
+        $builder->where('MONTH(tb_presensi.tanggal)', $bulan);
+        $builder->where('YEAR(tb_presensi.tanggal)', $tahun);
+        $builder->orderBy('tb_presensi.tanggal', 'ASC');
+        $builder->orderBy('tb_user.nama', 'ASC');
+        $query = $builder->get();
+        $presensi = $query->getResultArray();
 
         // Add data rows
         $no = 1;
         foreach ($presensi as $row) {
+            // Format status
+            $status = '';
+            if ($row['keterangan'] == 'telat') {
+                $status = 'Terlambat';
+            } elseif ($row['keterangan'] == 'hadir') {
+                $status = 'Hadir';
+            } else {
+                $status = $row['keterangan'];
+            }
+
             fputcsv($output, [
                 $no++,
                 date('d-m-Y', strtotime($row['tanggal'])),
                 $row['nama'],
-                $row['jam_masuk'],
-                $row['jam_pulang'],
+                $row['jenis_shift'],
+                $row['jam_masuk'] ?? '-',
+                $row['jam_pulang'] ?? '-',
                 number_format($row['persentase'], 2) . '%',
-                $row['keterangan']
+                $status
             ]);
         }
+
+        // Add summary
+        fputcsv($output, ['']); // Empty line for spacing
+        fputcsv($output, ['Total Karyawan: ' . count($presensi)]);
+        fputcsv($output, ['Tanggal Export: ' . date('d-m-Y H:i:s')]);
 
         fclose($output);
         exit;
@@ -137,13 +200,13 @@ class Presensi extends BaseController
     {
         // Terima data RFID dari request sebagai string
         $rfid = $this->request->getJSON()->rfid;
-        
+
         // Debug untuk melihat RFID yang diterima
         log_message('debug', 'RFID yang diterima: ' . $rfid);
-        
+
         // Cari user berdasarkan RFID (sebagai string)
         $user = $this->userModel->where('id_kartu_rfid', $rfid)->first();
-        
+
         if (!$user) {
             log_message('error', 'User tidak ditemukan untuk RFID: ' . $rfid);
             return $this->response->setJSON([
@@ -196,17 +259,17 @@ class Presensi extends BaseController
         if (!$existingPresensi) {
             // Presensi masuk
             $data['jam_masuk'] = $currentTime;
-            
+
             // Cek keterlambatan
             if (strtotime($currentTime) > strtotime($jadwalShift['shift_mulai'])) {
                 $data['keterangan'] = 'telat';
             } else {
                 $data['keterangan'] = 'hadir';
             }
-            
+
             // Insert presensi baru
             $this->presensiModel->insert($data);
-            
+
             return $this->response->setJSON([
                 'status' => 'success',
                 'message' => 'Presensi masuk berhasil',
@@ -219,10 +282,10 @@ class Presensi extends BaseController
         } else {
             // Presensi pulang
             $data['jam_pulang'] = $currentTime;
-            
+
             // Update presensi yang ada
             $this->presensiModel->update($existingPresensi['id_presensi'], $data);
-            
+
             // Hitung persentase kehadiran
             $persentase = $this->hitungPersentase(
                 $jadwalShift['shift_mulai'],
@@ -230,10 +293,10 @@ class Presensi extends BaseController
                 $existingPresensi['jam_masuk'],
                 $currentTime
             );
-            
+
             // Update persentase
             $this->presensiModel->update($existingPresensi['id_presensi'], ['persentase' => $persentase]);
-            
+
             return $this->response->setJSON([
                 'status' => 'success',
                 'message' => 'Presensi pulang berhasil',
@@ -248,41 +311,34 @@ class Presensi extends BaseController
 
     private function hitungPersentase($shiftMulai, $shiftSelesai, $jamMasuk, $jamPulang = null)
     {
-        // Debug untuk melihat parameter yang diterima
-        log_message('debug', 'Parameter hitungPersentase: ' . json_encode([
-            'shiftMulai' => $shiftMulai,
-            'shiftSelesai' => $shiftSelesai,
-            'jamMasuk' => $jamMasuk,
-            'jamPulang' => $jamPulang
-        ]));
-
-        // Konversi waktu ke menit untuk perhitungan
-        $shiftMulaiMenit = $this->waktuKeMenit($shiftMulai);
-        $shiftSelesaiMenit = $this->waktuKeMenit($shiftSelesai);
-        $jamMasukMenit = $this->waktuKeMenit($jamMasuk);
-
-        // Hitung total durasi shift dalam menit
-        $totalDurasiShift = $shiftSelesaiMenit - $shiftMulaiMenit;
-
-        // Hitung keterlambatan masuk (dalam menit)
-        $keterlambatanMasuk = max(0, $jamMasukMenit - $shiftMulaiMenit);
-
-        // Jika sudah ada jam pulang, hitung juga keterlambatan pulang
-        if ($jamPulang) {
-            $jamPulangMenit = $this->waktuKeMenit($jamPulang);
-            $keterlambatanPulang = max(0, $shiftSelesaiMenit - $jamPulangMenit);
-        } else {
-            $keterlambatanPulang = 0;
+        // Jika belum ada jam pulang, hitung berdasarkan jam masuk saja
+        if (!$jamPulang) {
+            // Jika jam masuk sama dengan shift_mulai, maka 100%
+            if ($jamMasuk === $shiftMulai) {
+                return 100;
+            }
+            // Jika jam masuk lebih awal dari shift_mulai, tetap 100%
+            if (strtotime($jamMasuk) < strtotime($shiftMulai)) {
+                return 100;
+            }
+            // Jika jam masuk lebih lambat dari shift_mulai, hitung keterlambatan
+            $keterlambatan = strtotime($jamMasuk) - strtotime($shiftMulai);
+            $totalShift = strtotime($shiftSelesai) - strtotime($shiftMulai);
+            $persentase = 100 - (($keterlambatan / $totalShift) * 100);
+            return max(0, min(100, round($persentase, 2)));
         }
 
-        // Hitung total keterlambatan
-        $totalKeterlambatan = $keterlambatanMasuk + $keterlambatanPulang;
+        // Jika sudah ada jam pulang, hitung berdasarkan jam masuk dan pulang
+        $totalShift = strtotime($shiftSelesai) - strtotime($shiftMulai);
+        $totalHadir = strtotime($jamPulang) - strtotime($jamMasuk);
 
-        // Hitung persentase kehadiran
-        // Rumus: ((Total Durasi Shift - Total Keterlambatan) / Total Durasi Shift) * 100
-        $persentase = (($totalDurasiShift - $totalKeterlambatan) / $totalDurasiShift) * 100;
+        // Jika total hadir lebih dari total shift, tetap 100%
+        if ($totalHadir >= $totalShift) {
+            return 100;
+        }
 
-        // Batasi persentase antara 0 dan 100
+        // Hitung persentase berdasarkan total hadir dibagi total shift
+        $persentase = ($totalHadir / $totalShift) * 100;
         return max(0, min(100, round($persentase, 2)));
     }
 
@@ -292,7 +348,7 @@ class Presensi extends BaseController
             log_message('error', 'Waktu kosong: ' . $waktu);
             return 0;
         }
-        
+
         list($jam, $menit) = explode(':', $waktu);
         return ($jam * 60) + $menit;
     }
@@ -355,13 +411,13 @@ class Presensi extends BaseController
     {
         // Terima data dari alat RFID
         $rfid = $this->request->getPost('rfid');
-        
+
         // Debug untuk melihat RFID yang diterima
         log_message('debug', 'RFID dari alat: ' . $rfid);
-        
+
         // Cari user berdasarkan RFID
         $user = $this->userModel->where('id_kartu_rfid', $rfid)->first();
-        
+
         if (!$user) {
             return $this->response->setJSON([
                 'status' => 'error',
@@ -393,26 +449,198 @@ class Presensi extends BaseController
             'tb_user_iduser' => $user['iduser']
         ])->first();
 
+        // Cek cooldown untuk RFID yang sama (5 detik)
+        $lastScan = $this->presensiModel->where('tb_user_iduser', $user['iduser'])
+            ->orderBy('dibuat_pada', 'DESC')
+            ->first();
+
+        if ($lastScan) {
+            $lastScanTime = strtotime($lastScan['dibuat_pada']);
+            $currentTime = time();
+            $cooldownTime = 5; // 5 detik dalam detik
+
+            if (($currentTime - $lastScanTime) < $cooldownTime) {
+                $remainingTime = $cooldownTime - ($currentTime - $lastScanTime);
+                return $this->response->setJSON([
+                    'status' => 'error',
+                    'message' => 'Mohon tunggu ' . ceil($remainingTime) . ' detik lagi sebelum scan ulang'
+                ]);
+            }
+        }
+
         $currentTime = date('H:i:s');
         $data = [
             'tanggal' => $today,
             'tb_user_iduser' => $user['iduser'],
-            'tb_jadwal_shift_id_jadwal_shift' => $user['id_jadwal_shift']
+            'tb_jadwal_shift_id_jadwal_shift' => $user['id_jadwal_shift'],
+            'dibuat_pada' => date('Y-m-d H:i:s'),
+            'diupdate_pada' => date('Y-m-d H:i:s')
         ];
+
+        // Cek apakah waktu scan di luar jadwal shift
+        $shiftMulaiTime = strtotime($jadwalShift['shift_mulai']);
+        $shiftSelesaiTime = strtotime($jadwalShift['shift_selesai']);
+        $currentTimeStamp = strtotime($currentTime);
+
+        if ($currentTimeStamp < $shiftMulaiTime || $currentTimeStamp > $shiftSelesaiTime) {
+            $data['keterangan'] = 'tidak valid (di luar jam kerja)';
+        } else {
+            // Cek keterlambatan (lebih dari 1 jam)
+            $oneHourInSeconds = 3600;
+            if (($currentTimeStamp - $shiftMulaiTime) > $oneHourInSeconds) {
+                $data['keterangan'] = 'terlambat';
+            } else {
+                $data['keterangan'] = 'hadir';
+            }
+        }
 
         if (!$existingPresensi) {
             // Presensi masuk
             $data['jam_masuk'] = $currentTime;
-            
-            // Cek keterlambatan
-            if (strtotime($currentTime) > strtotime($jadwalShift['shift_mulai'])) {
-                $data['keterangan'] = 'telat';
+            $this->presensiModel->insert($data);
+
+            return $this->response->setJSON([
+                'status' => 'success',
+                'message' => 'Presensi masuk berhasil',
+                'data' => [
+                    'nama' => $user['nama'],
+                    'jam_masuk' => $currentTime,
+                    'keterangan' => $data['keterangan']
+                ],
+                'refresh' => true
+            ]);
+        } else {
+            // Presensi pulang
+            $data['jam_pulang'] = $currentTime;
+
+            // Update presensi yang ada
+            $this->presensiModel->update($existingPresensi['id_presensi'], $data);
+
+            // Hitung persentase kehadiran
+            $persentase = $this->hitungPersentase(
+                $jadwalShift['shift_mulai'],
+                $jadwalShift['shift_selesai'],
+                $existingPresensi['jam_masuk'],
+                $currentTime
+            );
+
+            // Update persentase
+            $this->presensiModel->update($existingPresensi['id_presensi'], ['persentase' => $persentase]);
+
+            return $this->response->setJSON([
+                'status' => 'success',
+                'message' => 'Presensi pulang berhasil',
+                'data' => [
+                    'nama' => $user['nama'],
+                    'jam_pulang' => $currentTime,
+                    'persentase' => $persentase
+                ],
+                'refresh' => true
+            ]);
+        }
+    }
+
+    public function publicScan()
+    {
+        return view('presensi/public_scan');
+    }
+
+    public function publicScanRfid()
+    {
+        // Terima data RFID dari request sebagai string
+        $rfid = $this->request->getJSON()->rfid;
+
+        // Debug untuk melihat RFID yang diterima
+        log_message('debug', 'RFID yang diterima: ' . $rfid);
+
+        // Cari user berdasarkan RFID (sebagai string)
+        $user = $this->userModel->where('id_kartu_rfid', $rfid)->first();
+
+        if (!$user) {
+            log_message('error', 'User tidak ditemukan untuk RFID: ' . $rfid);
+            return $this->response->setJSON([
+                'status' => 'error',
+                'message' => 'Kartu RFID tidak terdaftar'
+            ]);
+        }
+
+        // Cek jadwal shift user
+        if (!isset($user['id_jadwal_shift']) || empty($user['id_jadwal_shift'])) {
+            log_message('error', 'User ' . $user['nama'] . ' belum memiliki jadwal shift');
+            return $this->response->setJSON([
+                'status' => 'error',
+                'message' => 'User belum memiliki jadwal shift'
+            ]);
+        }
+
+        // Ambil jadwal shift
+        $jadwalShift = $this->jadwalShiftModel->find($user['id_jadwal_shift']);
+        if (!$jadwalShift) {
+            log_message('error', 'Jadwal shift tidak ditemukan untuk ID: ' . $user['id_jadwal_shift']);
+            return $this->response->setJSON([
+                'status' => 'error',
+                'message' => 'Jadwal shift tidak ditemukan'
+            ]);
+        }
+
+        // Cek cooldown untuk RFID yang sama (5 detik)
+        $lastScan = $this->presensiModel->where('tb_user_iduser', $user['iduser'])
+            ->orderBy('dibuat_pada', 'DESC')
+            ->first();
+
+        if ($lastScan) {
+            $lastScanTime = strtotime($lastScan['dibuat_pada']);
+            $currentTime = time();
+            $cooldownTime = 5; // 5 detik dalam detik
+
+            if (($currentTime - $lastScanTime) < $cooldownTime) {
+                $remainingTime = $cooldownTime - ($currentTime - $lastScanTime);
+                return $this->response->setJSON([
+                    'status' => 'error',
+                    'message' => 'Mohon tunggu ' . ceil($remainingTime) . ' detik lagi sebelum scan ulang',
+                    'cooldown' => true
+                ]);
+            }
+        }
+
+        // Cek apakah sudah ada presensi hari ini
+        $today = date('Y-m-d');
+        $existingPresensi = $this->presensiModel->where([
+            'tanggal' => $today,
+            'tb_user_iduser' => $user['iduser']
+        ])->first();
+
+        $currentTime = date('H:i:s');
+        $data = [
+            'tanggal' => $today,
+            'tb_user_iduser' => $user['iduser'],
+            'tb_jadwal_shift_id_jadwal_shift' => $user['id_jadwal_shift'],
+            'dibuat_pada' => date('Y-m-d H:i:s'),
+            'diupdate_pada' => date('Y-m-d H:i:s')
+        ];
+
+        // Cek apakah waktu scan di luar jadwal shift
+        $shiftMulaiTime = strtotime($jadwalShift['shift_mulai']);
+        $shiftSelesaiTime = strtotime($jadwalShift['shift_selesai']);
+        $currentTimeStamp = strtotime($currentTime);
+
+        if ($currentTimeStamp < $shiftMulaiTime || $currentTimeStamp > $shiftSelesaiTime) {
+            $data['keterangan'] = 'tidak valid (di luar jam kerja)';
+        } else {
+            // Cek keterlambatan (lebih dari 1 jam)
+            $oneHourInSeconds = 3600;
+            if (($currentTimeStamp - $shiftMulaiTime) > $oneHourInSeconds) {
+                $data['keterangan'] = 'terlambat';
             } else {
                 $data['keterangan'] = 'hadir';
             }
-            
+        }
+
+        if (!$existingPresensi) {
+            // Presensi masuk
+            $data['jam_masuk'] = $currentTime;
             $this->presensiModel->insert($data);
-            
+
             return $this->response->setJSON([
                 'status' => 'success',
                 'message' => 'Presensi masuk berhasil',
@@ -425,21 +653,21 @@ class Presensi extends BaseController
         } else {
             // Presensi pulang
             $data['jam_pulang'] = $currentTime;
-            
+
             // Update presensi yang ada
             $this->presensiModel->update($existingPresensi['id_presensi'], $data);
-            
+
             // Hitung persentase kehadiran
-            $persentase = $this->hitungPersentaseKehadiran(
-                $existingPresensi['jam_masuk'],
-                $currentTime,
+            $persentase = $this->hitungPersentase(
                 $jadwalShift['shift_mulai'],
-                $jadwalShift['shift_selesai']
+                $jadwalShift['shift_selesai'],
+                $existingPresensi['jam_masuk'],
+                $currentTime
             );
-            
+
             // Update persentase
             $this->presensiModel->update($existingPresensi['id_presensi'], ['persentase' => $persentase]);
-            
+
             return $this->response->setJSON([
                 'status' => 'success',
                 'message' => 'Presensi pulang berhasil',
